@@ -99,13 +99,78 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> Tree<T> {
 // private functions
 impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> Tree<T> {
     fn __remove_node_from_tree(&mut self, _crt: Rc<RefCell<TreeNode<T>>>) -> Option<Rc<RefCell<TreeNode<T>>>> {
-        // &mut TreeNode<T>
-        let mut _borrow_crt = _crt.borrow_mut();
+        // mut TreeNode<T>
+        let _base_borrow_crt = Rc::clone(&_crt);
+        let mut _borrow_crt = _base_borrow_crt.borrow_mut();
 
+        let switch_left = |_node: &Rc<RefCell<TreeNode<T>>>| -> Rc<RefCell<TreeNode<T>>> {
+            if let Some(_node) = &_node.borrow()._left {
+                return Rc::clone(_node);
+            }
+            panic!("Can not transfer None into Rc<...>.");
+        };
 
+        let switch_right = |_node: &Rc<RefCell<TreeNode<T>>>| -> Rc<RefCell<TreeNode<T>>> {
+            if let Some(_node) = &_node.borrow()._right {
+                return Rc::clone(_node);
+            }
+            panic!("Can not transfer None into Rc<...>.");
+        };
+
+        if !_borrow_crt._left.is_none() {
+            // check in the left
+
+            // &_borrow_crt._left => Option<&Rc<...>>
+            // Option<&Rc<...>>.unwrap() => &Rc<...>
+            // Rc::clone(&Rc<...>) => Rc<...>
+            let mut _lr = switch_left(&_crt);
+            let mut _front_lr = Rc::clone(&_crt);
+
+            while !_lr.borrow()._right.is_none() {
+                _front_lr = Rc::clone(&_lr);
+                _lr = switch_right(&_lr);
+            }
+
+            _borrow_crt._val = _lr.borrow()._val.clone();
+
+            if _lr.borrow()._left.is_none() && _lr.borrow()._right.is_none() {
+                // use _front_lr to remove _lr
+                if _front_lr.borrow()._val > _lr.borrow()._val {
+                    _front_lr.borrow_mut()._left = None;
+                } else {
+                    _front_lr.borrow_mut()._right = None;
+                }
+                return Some(_lr);
+            } else {
+                return self.__remove_node_from_tree(_lr);
+            }
+        }
+
+        // find a node in right exchange with current node
+        if !_borrow_crt._right.is_none() {
+            let mut _rl = switch_right(&_crt);
+            let mut _front_rl = Rc::clone(&_crt);
+
+            while !_rl.borrow()._left.is_none() {
+                _front_rl = Rc::clone(&_rl);
+                _rl = switch_left(&_rl);
+            }
+
+            _borrow_crt._val = _rl.borrow()._val.clone();
+            
+            if _rl.borrow()._left.is_none() && _rl.borrow()._right.is_none() {
+                if _front_rl.borrow()._val > _rl.borrow()._val {
+                    _front_rl.borrow_mut()._left = None;
+                } else {
+                    _front_rl.borrow_mut()._right = None;
+                }
+                return Some(_rl);
+            } else {
+                return self.__remove_node_from_tree(_rl);
+            }
+        }
         
-        drop(_borrow_crt);
-        return Some(_crt);
+        panic!("Can not remove a node without its parent node.");
     }
 }
 
@@ -192,7 +257,7 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> TreeType<T
         let mut _crt = Rc::clone(&self._root);
 
         loop {
-            let _base_borrow = Rc::clone(&_crt);    // TODO: redoundancy
+            let _base_borrow = Rc::clone(&_crt);
             let _borrow = _base_borrow.borrow();    // &TreeNode<T> type
 
             if _borrow._val == _val {
@@ -215,8 +280,6 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> TreeType<T
                 if let Some(_left) = &_borrow._left {
                     // move to next node and match the value
                     _front = Some(Rc::downgrade(&_crt));
-
-                    // TODO: drop(_borrow) then we can change _crt without copy another Rc<...> type
                     _crt = Rc::clone(_left);
                     continue;
                 }
