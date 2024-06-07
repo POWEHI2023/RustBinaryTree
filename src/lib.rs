@@ -2,19 +2,19 @@ use std::rc::{ Rc, Weak };
 use std::cell::{ RefCell };
 
 #[derive(Debug)]
-pub struct TreeNode<T: std::fmt::Display> {
+pub struct TreeNode<T: std::fmt::Display + std::clone::Clone> {
     _val: T,
     _left: Option<Rc<RefCell<TreeNode<T>>>>,
     _right: Option<Rc<RefCell<TreeNode<T>>>>,
 }
 
-impl<T: std::fmt::Display> Drop for TreeNode<T> {
+impl<T: std::fmt::Display + std::clone::Clone> Drop for TreeNode<T> {
     fn drop(&mut self) {
         // println!("drop tree node, value is {}", self._val);
     }
 }
 
-impl<T: std::fmt::Display> TreeNode<T> {
+impl<T: std::fmt::Display + std::clone::Clone> TreeNode<T> {
     #[allow(dead_code)]
     fn new(_val: T) -> TreeNode<T> {
         TreeNode { _val, _left: None, _right: None }
@@ -59,12 +59,12 @@ impl<T: std::fmt::Display> TreeNode<T> {
     }
 }
 
-pub trait TreeType<ElemType: std::cmp::PartialOrd + std::fmt::Display> {
+pub trait TreeType<ElemType: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> {
 
     fn insert_value(&mut self, _val: ElemType) -> bool;
-    fn insert_node(&mut self, _node: &TreeNode<ElemType>) -> bool;
+    fn insert_node(&mut self, _node: TreeNode<ElemType>) -> bool;
 
-    // fn remove_value(&mut self, _val: ElemType) -> Rc<RefCell<TreeNode<ElemType>>>;
+    fn remove_value(&mut self, _val: ElemType) -> Option<Rc<RefCell<TreeNode<ElemType>>>>;
     // fn remove_node(&mut self, _node: &TreeNode<ElemType>) -> Rc<RefCell<TreeNode<ElemType>>>;
 
     // check if _val is in the tree
@@ -74,31 +74,43 @@ pub trait TreeType<ElemType: std::cmp::PartialOrd + std::fmt::Display> {
 }
 
 #[derive(Debug)]
-struct Tree<T: std::cmp::PartialOrd + std::fmt::Display> {
+struct Tree<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> {
     _root: Rc<RefCell<TreeNode<T>>>,
-    _height: usize
+    _size: usize
 }
 
-impl<T: std::cmp::PartialOrd + std::fmt::Display> Drop for Tree<T> {
+impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> Drop for Tree<T> {
     fn drop(&mut self) {
         // println!("drop tree.");
     }
 }
 
-impl<T: std::cmp::PartialOrd + std::fmt::Display> Tree<T> {
+// public functions
+impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> Tree<T> {
     #[allow(dead_code)]
     pub fn new(_root_val: T) -> Tree<T> {
         Tree {
             _root: Rc::new(RefCell::new(TreeNode::new(_root_val))),
-            _height: 1
+            _size: 1
         }
     }
 }
 
-// 为了避免对引用计数频繁加减，尽量使用downgrade Weak
-// 如果使用Rc替代Weak会更方便实现
-// Weak使用了unsafe是因为我不知道怎样实现内部引用......
-impl<T: std::cmp::PartialOrd + std::fmt::Display> TreeType<T> for Tree<T> {
+// private functions
+impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> Tree<T> {
+    fn __remove_node_from_tree(&mut self, _crt: Rc<RefCell<TreeNode<T>>>) -> Option<Rc<RefCell<TreeNode<T>>>> {
+        // &mut TreeNode<T>
+        let mut _borrow_crt = _crt.borrow_mut();
+
+
+        
+        drop(_borrow_crt);
+        return Some(_crt);
+    }
+}
+
+// trait implementations
+impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> TreeType<T> for Tree<T> {
     #[allow(dead_code)]
     fn insert_value(&mut self, _val: T) -> bool {
         let mut _weak = Rc::downgrade(&self._root);
@@ -135,19 +147,91 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display> TreeType<T> for Tree<T> {
         }
     }
 
-    // non-implementation yet
     #[allow(dead_code)]
-    fn insert_node(&mut self, _node: &TreeNode<T>) -> bool {
-        false
+    fn insert_node(&mut self, _node: TreeNode<T>) -> bool {
+        let mut _ptr = Rc::clone(&self._root);
+
+        loop {
+            // &TreeNode<T> type, new Rc<RefCell<...>> borrowed to this argument
+            let _base_borrowed = Rc::clone(&_ptr);
+            let _borrow_ptr = _base_borrowed.borrow();  // for inner-visit
+
+            // this is effective to visit inner value of referenced TreeNode<T>
+            if _borrow_ptr._val == _node._val {
+                return false;
+            }
+
+            if _borrow_ptr._val > _node._val {
+                // if left node does not exist, insert node into the left
+                // _left is &Rc<RefCell<TreeNode<T>>> type
+                if let Some(_left) = &_borrow_ptr._left {
+                    // outer pointer is the node for current loop
+                    // point to the next node
+                    _ptr = Rc::clone(_left);
+                    continue;
+                }
+
+                let _new_node = Rc::new(RefCell::new(_node));
+                _ptr.borrow_mut().set_left_child(Rc::downgrade(&_new_node));
+                return true;
+            } else {
+                if let Some(_right) = &_borrow_ptr._right {
+                    _ptr = Rc::clone(_right);
+                    continue;
+                }
+
+                let _new_node = Rc::new(RefCell::new(_node));
+                _ptr.borrow_mut().set_right_child(Rc::downgrade(&_new_node));
+                return true;
+            }
+        }
     }
 
-    /*pub fn remove_value(&mut self, _val: T) -> Rc<RefCell<TreeNode<T>>> {
-        // Debug
-        // assume ElemType is i32
-        Rc::new(RefCell::new( TreeNode::<T>::new(0) ))
+    fn remove_value(&mut self, _val: T) -> Option<Rc<RefCell<TreeNode<T>>>> {
+        let mut _front: Option<Weak<RefCell<TreeNode<T>>>> = None;
+        let mut _crt = Rc::clone(&self._root);
+
+        loop {
+            let _base_borrow = Rc::clone(&_crt);
+            let _borrow = _base_borrow.borrow();    // &TreeNode<T> type
+
+            if _borrow._val == _val {
+                if _borrow._left.is_none() && _borrow._right.is_none() {
+                    if let Some(_weak_front) = _front {
+                        let mut _weak_front = unsafe { (*(_weak_front.as_ptr())).borrow_mut() };
+                        if _borrow._val > _weak_front._val {
+                            _weak_front._right = None;
+                        } else {
+                            _weak_front._left = None;
+                        }
+                        return Some(_crt);
+                    }
+                    panic!("can not remove the last element in the tree.");
+                }
+                return self.__remove_node_from_tree(_crt);
+            }
+
+            if _borrow._val > _val {
+                if let Some(_left) = &_borrow._left {
+                    // move to next node and match the value
+                    _front = Some(Rc::downgrade(&_crt));
+                    _crt = Rc::clone(_left);
+                    continue;
+                }
+                // can not find matched point which is _val
+                return None;
+            } else {
+                if let Some(_right) = &_borrow._right {
+                    _front = Some(Rc::downgrade(&_crt));
+                    _crt = Rc::clone(_right);
+                    continue;
+                }
+                return None;
+            }
+        }
     }
 
-    pub fn remove_node(&mut self, _node: &TreeNode<T>) -> Rc<RefCell<TreeNode<T>>> {
+    /*fn remove_node(&mut self, _node: &TreeNode<T>) -> Rc<RefCell<TreeNode<T>>> {
         // Debug
         // assume ElemType is i32
         Rc::new(RefCell::new( TreeNode::<T>::new(0) ))
@@ -220,5 +304,12 @@ mod tests {
         _tree.insert_value(2);
         _tree.insert_value(-2);
         _tree.insert_value(-1);
+
+        let _ptr = _tree.find_value(-1);
+        let _strong_ptr = _ptr.upgrade().unwrap();
+        // println!("{:#?}, strong: {}, weak: {}", _strong_ptr, Rc::strong_count(&_strong_ptr), Rc::weak_count(&_strong_ptr));
+
+        drop(_ptr);
+        // println!("{:#?}, strong: {}, weak: {}", _strong_ptr, Rc::strong_count(&_strong_ptr), Rc::weak_count(&_strong_ptr));
     }
 }
