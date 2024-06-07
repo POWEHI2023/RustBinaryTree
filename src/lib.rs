@@ -192,7 +192,7 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> TreeType<T
         let mut _crt = Rc::clone(&self._root);
 
         loop {
-            let _base_borrow = Rc::clone(&_crt);
+            let _base_borrow = Rc::clone(&_crt);    // TODO: redoundancy
             let _borrow = _base_borrow.borrow();    // &TreeNode<T> type
 
             if _borrow._val == _val {
@@ -215,6 +215,8 @@ impl<T: std::cmp::PartialOrd + std::fmt::Display + std::clone::Clone> TreeType<T
                 if let Some(_left) = &_borrow._left {
                     // move to next node and match the value
                     _front = Some(Rc::downgrade(&_crt));
+
+                    // TODO: drop(_borrow) then we can change _crt without copy another Rc<...> type
                     _crt = Rc::clone(_left);
                     continue;
                 }
